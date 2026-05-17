@@ -2,11 +2,11 @@ from fastapi import FastAPI, Request, Depends, HTTPException, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from supabase import create_client
 from pathlib import Path
 from dotenv import load_dotenv
 import os
 import secrets
+import httpx
 
 load_dotenv()
 
@@ -17,16 +17,24 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY")
-
-if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
-    raise Exception(f"Missing vars - URL:{bool(SUPABASE_URL)} KEY:{bool(SUPABASE_SERVICE_KEY)}")
-
-supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-
 ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
 
 security = HTTPBasic()
+
+def get_headers():
+    return {
+        "apikey": SUPABASE_SERVICE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+        "Content-Type": "application/json"
+    }
+
+async def query(table: str, params: str = ""):
+    url = f"{SUPABASE_URL}/rest/v1/{table}{params}"
+    async with httpx.AsyncClient() as client:
+        r = await client.get(url, headers=get_headers())
+        r.raise_for_status()
+        return r.json()
 
 def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
     is_correct = secrets.compare_digest(credentials.username, ADMIN_USERNAME)
@@ -49,11 +57,11 @@ async def login_page(request: Request):
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request, username: str = Depends(verify_admin)):
-    users = supabase.table("users").select("*").execute()
-    sites = supabase.table("sites").select("*, users(email)").execute()
-    total_users = len(users.data)
-    total_sites = len(sites.data)
-    active_sites = sum(1 for site in sites.data if site.get("site_token"))
+    users = await query("users", "?select=*")
+    sites = await query("sites", "?select=*,users(email)")
+    total_users = len(users)
+    total_sites = len(sites)
+    active_sites = sum(1 for s in sites if s.get("site_token"))
     pending_sites = total_sites - active_sites
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
@@ -61,39 +69,39 @@ async def dashboard(request: Request, username: str = Depends(verify_admin)):
         "total_sites": total_sites,
         "active_sites": active_sites,
         "pending_sites": pending_sites,
-        "recent_users": users.data[:5],
-        "recent_sites": sites.data[:5]
+        "recent_users": users[:5],
+        "recent_sites": sites[:5]
     })
 
 @app.get("/users", response_class=HTMLResponse)
 async def list_users(request: Request, username: str = Depends(verify_admin)):
-    users = supabase.table("users").select("*").order("created_at", desc=True).execute()
-    for user in users.data:
-        sites = supabase.table("sites").select("*").eq("user_id", user["id"]).execute()
-        user["site_count"] = len(sites.data)
+    users = await query("users", "?select=*&order=created_at.desc")
+    for user in users:
+        sites = await query("sites", f"?select=*&user_id=eq.{user['id']}")
+        user["site_count"] = len(sites)
     return templates.TemplateResponse("users.html", {
         "request": request,
-        "users": users.data
+        "users": users
     })
 
 @app.get("/user/{user_id}", response_class=HTMLResponse)
 async def user_detail(request: Request, user_id: str, username: str = Depends(verify_admin)):
-    user = supabase.table("users").select("*").eq("id", user_id).execute()
-    if not user.data:
+    users = await query("users", f"?select=*&id=eq.{user_id}")
+    if not users:
         raise HTTPException(404, "User not found")
-    sites = supabase.table("sites").select("*").eq("user_id", user_id).execute()
+    sites = await query("sites", f"?select=*&user_id=eq.{user_id}")
     return templates.TemplateResponse("user_detail.html", {
         "request": request,
-        "user": user.data[0],
-        "sites": sites.data
+        "user": users[0],
+        "sites": sites
     })
 
 @app.get("/sites", response_class=HTMLResponse)
 async def list_sites(request: Request, username: str = Depends(verify_admin)):
-    sites = supabase.table("sites").select("*, users(email)").order("created_at", desc=True).execute()
+    sites = await query("sites", "?select=*,users(email)&order=created_at.desc")
     return templates.TemplateResponse("sites.html", {
         "request": request,
-        "sites": sites.data
+        "sites": sites
     })
 
 @app.get("/health")
