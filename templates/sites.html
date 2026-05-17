@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+
+{% block title %}Sites - Admin{% endblock %}
+{% block header %}All Websites{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-body">
+        <table class="table table-bordered">
+            <thead>
+                <tr>
+                    <th>Site URL</th>
+                    <th>Owner</th>
+                    <th>API Key</th>
+                    <th>Status</th>
+                    <th>Created</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for site in sites %}
+                <tr>
+                    <td>{{ site.site_url }}</td>
+                    <td>{{ site.users.email }}</td>
+                    <td><code>{{ site.api_key[:20] }}...</code></td>
+                    <td>
+                        {% if site.site_token %}
+                            <span class="badge bg-success">✅ Connected</span>
+                        {% else %}
+                            <span class="badge bg-warning">⏳ Pending</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ site.created_at[:10] }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
